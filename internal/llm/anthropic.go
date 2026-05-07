@@ -13,7 +13,7 @@ type AnthropicClient struct {
 	model  string
 }
 
-func NewAnthorpicClien(apiKey, model string) (*AnthropicClient, error) {
+func NewAnthropicClient(apiKey, model string) (*AnthropicClient, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("anthropic: API key reuerida")
 	}
