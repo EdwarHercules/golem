@@ -12,19 +12,28 @@ import (
 	"github.com/EdwarHercules/golem/internal/memory"
 )
 
-type Agent struct {
-	llm      llm.LLMClient
-	executor executor.Executor
-	config   *config.Config
-	memory   *memory.Memory // NUEVO
+type AgentOptions struct {
+	SystemPrompt string
+	MaxSteps     int
 }
 
-func NewAgent(llmClient llm.LLMClient, exec executor.Executor, cfg *config.Config) *Agent {
+type Agent struct {
+	llm          llm.LLMClient
+	executor     executor.Executor
+	config       *config.Config
+	memory       *memory.Memory
+	systemPrompt string // NUEVO — identidad fija del agente
+	maxSteps     int    // NUEVO — cuántos pasos de análisis hace
+}
+
+func NewAgent(llmClient llm.LLMClient, exec executor.Executor, cfg *config.Config, opts AgentOptions) *Agent {
 	return &Agent{
-		llm:      llmClient,
-		executor: exec,
-		config:   cfg,
-		memory:   memory.New(), // NUEVO
+		llm:          llmClient,
+		executor:     exec,
+		config:       cfg,
+		memory:       memory.New(),
+		systemPrompt: opts.SystemPrompt, // NUEVO
+		maxSteps:     opts.MaxSteps,     // NUEVO
 	}
 }
 
@@ -38,7 +47,7 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 		fmt.Printf("\n[Intento %d/%d] Consultando al LLM...\n", attempt, a.config.MaxRetries)
 
 		// RAZONAR — pasamos el historial completo de Memory
-		response, err := a.llm.Complete(ctx, SystemPrompt, a.memory.Messages())
+		response, err := a.llm.Complete(ctx, a.systemPrompt, a.memory.Messages())
 
 		if err != nil {
 			return "", fmt.Errorf("error consultando LLM en intento %d: %w", attempt, err)
@@ -51,7 +60,11 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 
 		// ¿El LLM escribió el reporte final? — texto sin código
 		// Si contiene REPORTE GOLEM pero no bloques de código, el análisis terminó
-		if strings.Contains(response, "REPORTE GOLEM") && !strings.Contains(response, "```") {
+		isReport := strings.Contains(response, "REPORTE GOLEM") &&
+			!strings.Contains(response, "```go") &&
+			!strings.Contains(response, "package main")
+
+		if isReport {
 			fmt.Println("[Golem] Reporte final detectado ✅")
 			return response, nil
 		}
@@ -115,17 +128,17 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 
 		// Mensaje diferente según cuántos pasos exitosos llevamos
 		var nextMsg string
-		if successCount >= 3 {
+		if successCount >= a.maxSteps {
 			// Ya completamos los 3 pasos — pedirle el reporte directamente
 			nextMsg = fmt.Sprintf(
-				"RESULTADO DE EJECUCIÓN (paso %d):\n%s\n\nYa completaste los 3 pasos de análisis. Ahora escribe SOLAMENTE el REPORTE GOLEM final en texto. NO generes más código.",
-				successCount, result.Stdout,
+				"RESULTADO DE EJECUCIÓN (paso %d):\n%s\n\nYa completaste los %d pasos de análisis. Ahora escribe SOLAMENTE el REPORTE GOLEM final en texto. NO generes más código.",
+				successCount, result.Stdout, a.maxSteps,
 			)
 		} else {
 			// Todavía hay pasos pendientes
 			nextMsg = fmt.Sprintf(
-				"RESULTADO DE EJECUCIÓN (paso %d de 3):\n%s\n\nContinúa con el paso %d del análisis.",
-				successCount, result.Stdout, successCount+1,
+				"RESULTADO DE EJECUCIÓN (paso %d de %d):\n%s\n\nContinúa con el paso %d del análisis.",
+				successCount, a.maxSteps, result.Stdout, successCount+1,
 			)
 		}
 		a.memory.AddUserMessage(nextMsg)
