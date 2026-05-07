@@ -8,5 +8,5 @@ type Message struct {
 }
 
 type LLMClient interface {
-	Complete(ctx context.Context, messages []Message) (string, error)
+	Complete(ctx context.Context, systemPrompt string, messages []Message) (string, error)
 }

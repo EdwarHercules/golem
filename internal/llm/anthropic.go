@@ -31,7 +31,7 @@ func NewAnthropicClient(apiKey, model string) (*AnthropicClient, error) {
 	}, nil
 }
 
-func (c *AnthropicClient) Complete(ctx context.Context, messages []Message) (string, error) {
+func (c *AnthropicClient) Complete(ctx context.Context, systemPrompt string, messages []Message) (string, error) {
 	sdkMessages := make([]anthropic.MessageParam, len(messages))
 	for i, msg := range messages {
 		if msg.Role == "user" {
@@ -48,8 +48,11 @@ func (c *AnthropicClient) Complete(ctx context.Context, messages []Message) (str
 	// Llamar a la API
 	response, err := c.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(c.model),
-		MaxTokens: 1024,
-		Messages:  sdkMessages,
+		MaxTokens: 8096,
+		System: []anthropic.TextBlockParam{
+			{Text: systemPrompt},
+		},
+		Messages: sdkMessages,
 	})
 	if err != nil {
 		return "", fmt.Errorf("anthropic: error llamando API: %w", err)

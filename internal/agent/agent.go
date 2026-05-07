@@ -32,12 +32,14 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 	// En lugar de crear messages local, usamos Memory
 	// Memory construye el historial que el LLM recibe en cada turno
 	a.memory.AddUserMessage(task)
+	successCount := 0
 
 	for attempt := 1; attempt <= a.config.MaxRetries; attempt++ {
 		fmt.Printf("\n[Intento %d/%d] Consultando al LLM...\n", attempt, a.config.MaxRetries)
 
 		// RAZONAR — pasamos el historial completo de Memory
-		response, err := a.llm.Complete(ctx, a.memory.Messages())
+		response, err := a.llm.Complete(ctx, SystemPrompt, a.memory.Messages())
+
 		if err != nil {
 			return "", fmt.Errorf("error consultando LLM en intento %d: %w", attempt, err)
 		}
@@ -47,8 +49,23 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 		// Guardar respuesta del LLM — crucial para autocorrección
 		a.memory.AddAssistantMessage(response)
 
+		// ¿El LLM escribió el reporte final? — texto sin código
+		// Si contiene REPORTE GOLEM pero no bloques de código, el análisis terminó
+		if strings.Contains(response, "REPORTE GOLEM") && !strings.Contains(response, "```") {
+			fmt.Println("[Golem] Reporte final detectado ✅")
+			return response, nil
+		}
+
 		// ACTUAR
 		code := extractCode(response)
+
+		// Validar que el código extraído parece Go real
+		// Si no empieza con "package", no es código válido — pedirle al LLM que corrija
+		if code != "" && !strings.HasPrefix(strings.TrimSpace(code), "package") {
+			fmt.Println("[Warning] Código extraído no parece Go válido — solicitando corrección")
+			a.memory.AddUserMessage("El código que generaste no es Go válido. Asegúrate de generar SOLO el bloque de código Go, empezando con 'package main'.")
+			continue
+		}
 		fmt.Printf("[Executor] Ejecutando código (%d caracteres)...\n", len(code))
 
 		execCTX, cancel := context.WithTimeout(ctx,
@@ -91,24 +108,64 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 			continue
 		}
 
-		// ÉXITO
+		// ÉXITO — pasar output al LLM para que continúe con el siguiente paso
+		// El agente no para aquí — le da el resultado al LLM y sigue el análisis
 		fmt.Printf("[Éxito] Ejecutado en %v\n", result.Duration)
-		return result.Stdout, nil
+		successCount++ // NUEVO
+
+		// Mensaje diferente según cuántos pasos exitosos llevamos
+		var nextMsg string
+		if successCount >= 3 {
+			// Ya completamos los 3 pasos — pedirle el reporte directamente
+			nextMsg = fmt.Sprintf(
+				"RESULTADO DE EJECUCIÓN (paso %d):\n%s\n\nYa completaste los 3 pasos de análisis. Ahora escribe SOLAMENTE el REPORTE GOLEM final en texto. NO generes más código.",
+				successCount, result.Stdout,
+			)
+		} else {
+			// Todavía hay pasos pendientes
+			nextMsg = fmt.Sprintf(
+				"RESULTADO DE EJECUCIÓN (paso %d de 3):\n%s\n\nContinúa con el paso %d del análisis.",
+				successCount, result.Stdout, successCount+1,
+			)
+		}
+		a.memory.AddUserMessage(nextMsg)
+
 	}
 
 	return "", fmt.Errorf("se agotaron los reintentos")
 }
 
 func extractCode(response string) string {
-	start := strings.Index(response, "```go")
-	if start == -1 {
-		start = strings.Index(response, "```")
-		if start == -1 {
-			return strings.TrimSpace(response)
+	// Buscar inicio de cualquier bloque de código
+	// Primero intentamos el más específico: ```go
+	markers := []string{"```go", "```Go", "```golang"}
+
+	for _, marker := range markers {
+		start := strings.Index(response, marker)
+		if start != -1 {
+			start += len(marker)
+			// Saltar el resto de la primera línea si hay texto después del marker
+			if nl := strings.Index(response[start:], "\n"); nl != -1 {
+				start += nl + 1
+			}
+			end := strings.Index(response[start:], "```")
+			if end != -1 {
+				return strings.TrimSpace(response[start : start+end])
+			}
 		}
-		start += 3
-	} else {
-		start += 5
+	}
+
+	// Fallback: cualquier bloque ```
+	start := strings.Index(response, "```")
+	if start == -1 {
+		// No hay bloque — asumir que toda la respuesta es código
+		return strings.TrimSpace(response)
+	}
+
+	// Saltar la línea del marker (puede ser ```bash, ```powershell, etc.)
+	start += 3
+	if nl := strings.Index(response[start:], "\n"); nl != -1 {
+		start += nl + 1
 	}
 
 	end := strings.Index(response[start:], "```")
