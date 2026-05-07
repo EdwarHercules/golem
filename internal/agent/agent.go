@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"encoding/json"
 
 	"github.com/EdwarHercules/golem/config"
 	"github.com/EdwarHercules/golem/internal/executor"
@@ -15,6 +16,7 @@ import (
 type AgentOptions struct {
 	SystemPrompt string
 	MaxSteps     int
+	TerminationSignal string
 }
 
 type Agent struct {
@@ -24,6 +26,7 @@ type Agent struct {
 	memory       *memory.Memory
 	systemPrompt string // NUEVO — identidad fija del agente
 	maxSteps     int    // NUEVO — cuántos pasos de análisis hace
+	terminationSignal string
 }
 
 func NewAgent(llmClient llm.LLMClient, exec executor.Executor, cfg *config.Config, opts AgentOptions) *Agent {
@@ -34,10 +37,11 @@ func NewAgent(llmClient llm.LLMClient, exec executor.Executor, cfg *config.Confi
 		memory:       memory.New(),
 		systemPrompt: opts.SystemPrompt, // NUEVO
 		maxSteps:     opts.MaxSteps,     // NUEVO
+		terminationSignal: opts.TerminationSignal,
 	}
 }
 
-func (a *Agent) Run(ctx context.Context, task string) (string, error) {
+func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 	// En lugar de crear messages local, usamos Memory
 	// Memory construye el historial que el LLM recibe en cada turno
 	a.memory.AddUserMessage(task)
@@ -50,7 +54,7 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 		response, err := a.llm.Complete(ctx, a.systemPrompt, a.memory.Messages())
 
 		if err != nil {
-			return "", fmt.Errorf("error consultando LLM en intento %d: %w", attempt, err)
+			return nil, fmt.Errorf("error consultando LLM en intento %d: %w", attempt, err)
 		}
 
 		fmt.Printf("[LLM] Respuesta recibida (%d caracteres)\n", len(response))
@@ -58,15 +62,31 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 		// Guardar respuesta del LLM — crucial para autocorrección
 		a.memory.AddAssistantMessage(response)
 
+		if strings.Contains(response, "---FINDINGS_END---") && successCount < a.maxSteps {
+		a.memory.AddUserMessage(fmt.Sprintf(
+			"Aún no has ejecutado los %d pasos de análisis. Solo completaste %d. NO escribas el reporte todavía. Genera el código Go para el paso %d.",
+			a.maxSteps, successCount, successCount+1,
+		))
+		continue
+	}
+
 		// ¿El LLM escribió el reporte final? — texto sin código
 		// Si contiene REPORTE GOLEM pero no bloques de código, el análisis terminó
-		isReport := strings.Contains(response, "REPORTE GOLEM") &&
+		isFindingsReport := strings.Contains(response, "---FINDINGS_END---") && 
+    	successCount >= a.maxSteps
+		isTextReport := strings.Contains(response, a.terminationSignal) &&
 			!strings.Contains(response, "```go") &&
-			!strings.Contains(response, "package main")
+			!strings.Contains(response, "package main") &&
+			len(strings.TrimSpace(response)) > 200
+
+		isReport := isFindingsReport || isTextReport
 
 		if isReport {
 			fmt.Println("[Golem] Reporte final detectado ✅")
-			return response, nil
+			return &AgentResult{
+				Report:   response,
+				Findings: parseFindings(response),
+			}, nil
 		}
 
 		// ACTUAR
@@ -74,7 +94,12 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 
 		// Validar que el código extraído parece Go real
 		// Si no empieza con "package", no es código válido — pedirle al LLM que corrija
-		if code != "" && !strings.HasPrefix(strings.TrimSpace(code), "package") {
+		if code == "" {
+			a.memory.AddUserMessage("No detecté código Go en tu respuesta. Continúa con el siguiente paso del análisis generando el código correspondiente.")
+			continue
+		}
+
+		if !strings.HasPrefix(strings.TrimSpace(code), "package") {
 			fmt.Println("[Warning] Código extraído no parece Go válido — solicitando corrección")
 			a.memory.AddUserMessage("El código que generaste no es Go válido. Asegúrate de generar SOLO el bloque de código Go, empezando con 'package main'.")
 			continue
@@ -91,7 +116,7 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 			fmt.Printf("[Error] El executor falló: %v\n", execErr)
 
 			if attempt == a.config.MaxRetries {
-				return "", fmt.Errorf("executor falló después de %d intentos: %w",
+				return nil, fmt.Errorf("executor falló después de %d intentos: %w",
 					a.config.MaxRetries, execErr)
 			}
 
@@ -108,7 +133,7 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 			fmt.Printf("[Fallo] ExitCode: %d\nStderr: %s\n", result.ExitCode, result.Stderr)
 
 			if attempt == a.config.MaxRetries {
-				return "", fmt.Errorf(
+				return nil, fmt.Errorf(
 					"código generado falló después de %d intentos.\nÚltimo error:\n%s",
 					a.config.MaxRetries, result.Stderr,
 				)
@@ -131,7 +156,7 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 		if successCount >= a.maxSteps {
 			// Ya completamos los 3 pasos — pedirle el reporte directamente
 			nextMsg = fmt.Sprintf(
-				"RESULTADO DE EJECUCIÓN (paso %d):\n%s\n\nYa completaste los %d pasos de análisis. Ahora escribe SOLAMENTE el REPORTE GOLEM final en texto. NO generes más código.",
+				"RESULTADO DE EJECUCIÓN (paso %d):\n%s\n\nYa completaste los %d pasos. Ahora DEBES:\n1. Imprimir cada hallazgo como JSON (un objeto por línea)\n2. Imprimir exactamente: ---FINDINGS_END---\n3. Escribir el REPORTE GOLEM en texto\nNO generes más código Go.",
 				successCount, result.Stdout, a.maxSteps,
 			)
 		} else {
@@ -145,7 +170,8 @@ func (a *Agent) Run(ctx context.Context, task string) (string, error) {
 
 	}
 
-	return "", fmt.Errorf("se agotaron los reintentos")
+	return nil, fmt.Errorf("se agotaron los reintentos")
+
 }
 
 func extractCode(response string) string {
@@ -171,8 +197,7 @@ func extractCode(response string) string {
 	// Fallback: cualquier bloque ```
 	start := strings.Index(response, "```")
 	if start == -1 {
-		// No hay bloque — asumir que toda la respuesta es código
-		return strings.TrimSpace(response)
+		return "" // ← no hay código — el loop manejará esto
 	}
 
 	// Saltar la línea del marker (puede ser ```bash, ```powershell, etc.)
@@ -187,4 +212,25 @@ func extractCode(response string) string {
 	}
 
 	return strings.TrimSpace(response[start : start+end])
+}
+
+func parseFindings(output string) []Finding {
+	var findings []Finding
+
+	parts := strings.SplitN(output, "---FINDINGS_END---", 2)
+
+	for _, line := range strings.Split(parts[0], "\n") {
+		line = strings.TrimSpace(line)
+
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+
+		var f Finding
+		if err := json.Unmarshal([]byte(line), &f); err != nil {
+			continue
+		}
+		findings = append(findings, f)
+	}
+	return findings
 }
