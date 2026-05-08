@@ -9,46 +9,40 @@ import (
 )
 
 // VULNERABILIDAD 1 — SQL Injection
-// query construye una query concatenando directamente el input del usuario
+// Concatena input del usuario directamente en la query — nunca hacer esto
 func getUserByID(db *sql.DB, userID string) {
-	stmt, err := db.Prepare("SELECT * FROM users WHERE id=?")
+	query := "SELECT * FROM users WHERE id=" + userID
+	rows, err := db.Query(query)
 	if err != nil {
-		fmt.Println("Error preparing statement:", err)
+		fmt.Println("Error:", err)
 		return
 	}
-	defer stmt.Close()
-	row := stmt.QueryRow(userID)
-	_ = row
-	fmt.Println(query)
+	defer rows.Close()
 
-	stmt, err := db.Prepare("SELECT name FROM products WHERE category=?")
+	search := "SELECT name FROM products WHERE category='" + userID + "'"
+	rows2, err := db.Query(search)
 	if err != nil {
-		fmt.Println("Error preparing statement:", err)
+		fmt.Println("Error:", err)
 		return
 	}
-	defer stmt.Close()
-	row := stmt.QueryRow(userID)
-	_ = row
-	fmt.Println(search)
+	defer rows2.Close()
 }
 
 // VULNERABILIDAD 2 — Credenciales hardcodeadas
 func connectToServices() {
-	password := os.Getenv("PASSWORD")
-	apiKey := os.Getenv("API_KEY")
-	token := os.Getenv("TOKEN")
-	dbSecret := os.Getenv("DB_SECRET")
+	password := "supersecret123"
+	apiKey := "sk-prod-abc123xyz789"
+	token := "eyJhbGciOiJIUzI1NiJ9.hardcoded"
+	dbSecret := "postgres://admin:root1234@localhost/prod"
 
 	fmt.Println(password, apiKey, token, dbSecret)
 }
 
 // VULNERABILIDAD 3 — Input sin sanitizar
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-	// Input del usuario pasado directo a exec.Command
 	filename := r.FormValue("file")
 	exec.Command("cat", filename).Run()
 
-	// Input de URL pasado directo a os.Open
 	path := r.URL.Query().Get("path")
 	os.Open(path)
 }
