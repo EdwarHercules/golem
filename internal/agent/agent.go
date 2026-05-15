@@ -21,6 +21,13 @@ type AgentOptions struct {
 	MaxSteps          int
 	TerminationSignal string
 	Verbose           bool
+	ProgressCallback  func(event string, message string)
+	CodeCallback      func(step int, code string)
+	// RequireStructuredFindings disables the text-only termination path and
+	// forces the agent to wait for a proper ---FINDINGS_END--- marker before
+	// returning. Set this for security analysis where missing findings must be
+	// an error, not a silent empty list.
+	RequireStructuredFindings bool
 }
 
 // Agent es el orquestador del loop ReAct (Razonar → Actuar → Observar).
@@ -35,7 +42,10 @@ type Agent struct {
 	systemPrompt      string
 	maxSteps          int
 	terminationSignal string
-	verbose           bool
+	verbose                   bool
+	progressCallback          func(event string, message string)
+	codeCallback              func(step int, code string)
+	requireStructuredFindings bool
 }
 
 // NewAgent crea un agente con la configuración y opciones dadas.
@@ -49,7 +59,10 @@ func NewAgent(llmClient llm.LLMClient, exec executor.Executor, cfg *config.Confi
 		systemPrompt:      opts.SystemPrompt,
 		maxSteps:          opts.MaxSteps,
 		terminationSignal: opts.TerminationSignal,
-		verbose:           opts.Verbose,
+		verbose:                   opts.Verbose,
+		progressCallback:          opts.ProgressCallback,
+		codeCallback:              opts.CodeCallback,
+		requireStructuredFindings: opts.RequireStructuredFindings,
 	}
 }
 
@@ -58,12 +71,16 @@ func NewAgent(llmClient llm.LLMClient, exec executor.Executor, cfg *config.Confi
 func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 	a.memory.AddUserMessage(task)
 	successCount := 0
+	var programFindings []Finding
 
 	for attempt := 1; attempt <= a.config.MaxRetries; attempt++ {
 		if a.verbose {
 			fmt.Printf("\n[STEP %d/%d] Consultando al LLM...\n", attempt, a.config.MaxRetries)
 		} else if attempt > 1 {
 			fmt.Printf("  ↻ Reintento %d/%d...\n", attempt, a.config.MaxRetries)
+			if a.progressCallback != nil {
+				a.progressCallback("retry", fmt.Sprintf("Reintento %d/%d...", attempt, a.config.MaxRetries))
+			}
 		}
 
 		// RAZONAR — el LLM recibe el historial completo para poder autocorregirse
@@ -96,9 +113,13 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 			if a.verbose {
 				fmt.Println("[Golem] Reporte final detectado ✅")
 			}
+			findings := parseFindings(response)
+			if len(findings) == 0 {
+				findings = programFindings
+			}
 			return &AgentResult{
 				Report:   response,
-				Findings: parseFindings(response),
+				Findings: findings,
 			}, nil
 		}
 
@@ -127,6 +148,10 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 			continue
 		}
 
+		if a.codeCallback != nil {
+			a.codeCallback(successCount+1, code)
+		}
+
 		if a.verbose {
 			fmt.Println("\n[CODE] Código generado:")
 			fmt.Println("─────────────────────────────────────")
@@ -135,6 +160,9 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 			fmt.Printf("[EXEC] Ejecutando (%d chars)...\n", len(code))
 		} else {
 			fmt.Printf("  → Ejecutando paso %d...\n", successCount+1)
+			if a.progressCallback != nil {
+				a.progressCallback("step_start", fmt.Sprintf("→ Ejecutando paso %d...", successCount+1))
+			}
 		}
 
 		// ACTUAR — ejecutar con timeout
@@ -180,12 +208,16 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 
 		// ÉXITO — el código ejecutó correctamente
 		successCount++
+		programFindings = append(programFindings, parseFindings(result.Stdout)...)
 
 		if a.verbose {
 			fmt.Printf("[OK] Ejecutado en %v\n", result.Duration)
 			fmt.Println("[OUTPUT]:", result.Stdout)
 		} else {
 			fmt.Printf("  ✓ Paso %d completado (%v)\n", successCount, result.Duration)
+		}
+		if a.progressCallback != nil {
+			a.progressCallback("step_done", fmt.Sprintf("✓ Paso %d completado (%v)", successCount, result.Duration))
 		}
 
 		// Dar el output al LLM para que continúe — acumular contexto es clave para CodeAct
@@ -201,6 +233,13 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 func (a *Agent) isTerminalReport(response string, successCount int) bool {
 	isFindingsReport := strings.Contains(response, "---FINDINGS_END---") &&
 		successCount >= a.maxSteps
+
+	// When RequireStructuredFindings is set (security mode), only the marker
+	// path is valid. Accepting a plain-text report without ---FINDINGS_END---
+	// would silently return empty findings, which is worse than an error.
+	if a.requireStructuredFindings {
+		return isFindingsReport
+	}
 
 	isTextReport := strings.Contains(response, a.terminationSignal) &&
 		!strings.Contains(response, "```go") &&

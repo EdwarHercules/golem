@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="GOLEM — Agente CodeAct para análisis estático de código Go">
+  <title>GOLEM — CodeAct Agent</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">&#9670;</span>
+      <strong class="brand-name">GOLEM</strong>
+      <span class="brand-badge">CodeAct Agent</span>
+    </div>
+    <div class="status-row" aria-live="polite" aria-atomic="true">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">Listo</span>
+    </div>
+  </header>
+
+  <main class="workspace">
+
+    <!-- Panel izquierdo: editor de código -->
+    <section class="panel" id="panel-editor" aria-label="Editor de código">
+      <div class="panel-header">
+        <div class="file-tab active">
+          <span class="tab-dot" aria-hidden="true">&#9679;</span>
+          <span>editor.go</span>
+        </div>
+      </div>
+
+      <div class="editor-body">
+        <ol class="line-numbers" id="line-numbers" aria-hidden="true">
+          <li>1</li>
+        </ol>
+        <textarea
+          id="code-input"
+          spellcheck="false"
+          autocorrect="off"
+          autocomplete="off"
+          autocapitalize="off"
+          aria-label="Editor de código Go"
+          aria-multiline="true"
+        ></textarea>
+      </div>
+
+      <div class="panel-footer">
+        <div class="action-group">
+          <button class="btn btn-analyze" id="btn-analyze" disabled>
+            <span aria-hidden="true">&#9654;</span> Analizar
+          </button>
+          <button class="btn btn-security" id="btn-security" disabled>
+            <span aria-hidden="true">&#9670;</span> Seguridad
+          </button>
+        </div>
+        <div class="examples-group">
+          <button class="btn-link" id="btn-example-sec">&#128274; Seg. Ejemplo</button>
+          <button class="btn-link" id="btn-example-qual">&#128202; Cal. Ejemplo</button>
+        </div>
+        <button class="btn-link" id="btn-upload">&#128193; Subir archivo</button>
+        <input type="file" id="file-upload" accept=".go" style="display:none" aria-hidden="true">
+      </div>
+    </section>
+
+    <!-- Separador vertical -->
+    <div class="panel-divider" role="separator" aria-orientation="vertical"></div>
+
+    <!-- Panel derecho: resultado -->
+    <section class="panel" id="panel-output" aria-label="Resultado del análisis">
+      <div class="panel-header">
+        <div class="file-tab active">
+          <span class="tab-dot muted" aria-hidden="true">&#9675;</span>
+          <span>output</span>
+        </div>
+        <button class="icon-btn hidden" id="btn-clear" title="Limpiar" aria-label="Limpiar resultado">&#10005;</button>
+      </div>
+
+      <div class="output-body" id="output-area" aria-live="polite" aria-atomic="false">
+        <div class="empty-state" id="empty-state">
+          <span class="empty-glyph" aria-hidden="true">&#9670;</span>
+          <p>Pega código Go en el editor y ejecuta un análisis</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="statusline" aria-label="Barra de estado">
+    <span id="cursor-pos">Ln 1, Col 1</span>
+    <span class="sep" aria-hidden="true">|</span>
+    <span>Go</span>
+    <span class="sep" aria-hidden="true">|</span>
+    <span>UTF-8</span>
+    <span class="statusline-end">GOLEM v1.0.0</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

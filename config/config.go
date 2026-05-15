@@ -40,7 +40,7 @@ func Load() (*Config, error) {
 		model = "claude-haiku-4-5-20251001" 
 	}
 
-	maxRetries := 3
+	maxRetries := 10 // security needs 3 steps + 1 report + room for retries
 	if val := os.Getenv("MAX_RETRIES"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil && n > 0 {
 			maxRetries = n
