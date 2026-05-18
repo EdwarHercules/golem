@@ -37,7 +37,7 @@ func Load() (*Config, error) {
 
 	model := os.Getenv("ANTHROPIC_MODEL")
 	if model == "" {
-		model = "claude-haiku-4-5-20251001" 
+		model = "claude-haiku-4-5-20251001"
 	}
 
 	maxRetries := 10 // security needs 3 steps + 1 report + room for retries
