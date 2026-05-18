@@ -1,6 +1,6 @@
 # Binarios compilados
-golem
-golem.exe
+/golem
+/golem.exe
 *.exe
 
 # Variables de entorno — NUNCA subir esto
