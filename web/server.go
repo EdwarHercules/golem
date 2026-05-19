@@ -253,6 +253,17 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		// It must happen exactly once, so we defer it here.
 		defer close(events)
 
+		defer func() {
+			if rec := recover(); rec != nil {
+				select {
+				case events <- agentEvent{
+					eventType: "error",
+					message:   fmt.Sprintf("error interno inesperado: %v", rec),
+				}:
+				default:
+				}
+			}
+		}()
 		events <- agentEvent{eventType: "progress", message: "Iniciando análisis..."}
 
 		// Create a fresh agent per request so each call has isolated memory.
@@ -409,6 +420,17 @@ func (s *Server) handleSecurity(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer close(events)
 
+		defer func() {
+			if rec := recover(); rec != nil {
+				select {
+				case events <- agentEvent{
+					eventType: "error",
+					message:   fmt.Sprintf("error interno inesperado: %v", rec),
+				}:
+				default:
+				}
+			}
+		}()
 		events <- agentEvent{eventType: "progress", message: "Iniciando auditoría de seguridad..."}
 
 		// SecurityPrompt directs the agent to focus on vulnerability classes
@@ -592,6 +614,17 @@ func (s *Server) handleFix(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		defer close(events)
+		defer func() {
+			if rec := recover(); rec != nil {
+				select {
+				case events <- agentEvent{
+					eventType: "error",
+					message:   fmt.Sprintf("error interno inesperado: %v", rec),
+				}:
+				default:
+				}
+			}
+		}()
 		events <- agentEvent{eventType: "progress", message: "Generando fixes..."}
 
 		maxSteps := len(req.Findings) + 1
