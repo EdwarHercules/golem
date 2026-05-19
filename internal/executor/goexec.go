@@ -19,6 +19,13 @@ func New() *GoExecutor {
 
 func (e *GoExecutor) Execute(ctx context.Context, code string) (ExecutionResult, error) {
 
+	// ── NUEVO: Validación de seguridad ──────────────────────────────────
+	// Analizamos el AST del código ANTES de escribirlo o ejecutarlo.
+	// Si contiene patrones peligrosos, rechazamos inmediatamente.
+	if err := ValidateCode(code); err != nil {
+		return ExecutionResult{}, fmt.Errorf("validación de seguridad: %w", err)
+	}
+
 	// Crear archivo temporal
 	tmpFile, err := os.CreateTemp("", "golem_*.go")
 	if err != nil {
