@@ -3,14 +3,60 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/EdwarHercules/golem/config"
 	"github.com/EdwarHercules/golem/internal/agent"
 	"github.com/EdwarHercules/golem/internal/executor"
 	"github.com/EdwarHercules/golem/internal/llm"
 )
+
+type rateLimiter struct {
+	mu      sync.Mutex
+	clients map[string]*clientState
+	limit   int
+	window  time.Duration
+}
+
+type clientState struct {
+	count   int
+	resetAt time.Time
+}
+
+func newRateLimiter(limit int, window time.Duration) *rateLimiter {
+	return &rateLimiter{
+		clients: make(map[string]*clientState),
+		limit:   limit,
+		window:  window,
+	}
+}
+
+func (rl *rateLimiter) allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	state, exists := rl.clients[ip]
+
+	if !exists || now.After(state.resetAt) {
+		rl.clients[ip] = &clientState{
+			count:   1,
+			resetAt: now.Add(rl.window),
+		}
+		return true
+	}
+
+	if state.count >= rl.limit {
+		return false
+	}
+
+	state.count++
+	return true
+}
 
 // Server bundles all dependencies for HTTP handlers in one place.
 // Grouping them here avoids global state and makes testing straightforward —
@@ -74,9 +120,10 @@ func (s *Server) Start() error {
 	fs := http.FileServer(http.Dir("web/static"))
 	mux.Handle("GET /", fs)
 
+	limiter := newRateLimiter(10, 60*time.Second)
 	// Apply CORS once at the mux level so every existing and future route
 	// is covered without per-handler boilerplate.
-	handler := corsMiddleware(mux)
+	handler := rateLimitMiddleware(limiter, corsMiddleware(mux))
 
 	return http.ListenAndServe(":"+s.port, handler)
 }
@@ -97,6 +144,24 @@ func corsMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		next.ServeHTTP(w, r)
+	})
+}
+
+func rateLimitMiddleware(limiter *rateLimiter, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := r.Header.Get("X-Forwarder-For")
+		if ip == "" {
+			ip, _, _ = net.SplitHostPort(r.RemoteAddr)
+		}
+
+		if !limiter.allow(ip) {
+			http.Error(w,
+				`{"error": "demasiados requests, intenta en un momento"}`,
+				http.StatusTooManyRequests,
+			)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -607,14 +672,14 @@ func parseWebPatches(output string) []webPatch {
 		}
 		block = block[:endIdx]
 
-		origIdx  := strings.Index(block, "ORIGINAL:\n")
+		origIdx := strings.Index(block, "ORIGINAL:\n")
 		fixedIdx := strings.Index(block, "FIXED:\n")
 		if origIdx == -1 || fixedIdx == -1 {
 			continue
 		}
 
 		original := strings.TrimSpace(block[origIdx+len("ORIGINAL:\n") : fixedIdx])
-		fixed    := strings.TrimSpace(block[fixedIdx+len("FIXED:\n"):])
+		fixed := strings.TrimSpace(block[fixedIdx+len("FIXED:\n"):])
 		if original != "" && fixed != "" {
 			patches = append(patches, webPatch{Original: original, Fixed: fixed})
 		}
