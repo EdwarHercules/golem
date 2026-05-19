@@ -197,7 +197,16 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Code string `json:"code"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		msg := `{"error":"missing or invalid 'code' field"}`
+		if err.Error() == "http: request body too large" {
+			msg = `{"error":"payload excede el límite de 1MB"}`
+		}
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+	if req.Code == "" {
 		http.Error(w, `{"error":"missing or invalid 'code' field"}`, http.StatusBadRequest)
 		return
 	}
@@ -370,7 +379,16 @@ func (s *Server) handleSecurity(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Code string `json:"code"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		msg := `{"error":"missing or invalid 'code' field"}`
+		if err.Error() == "http: request body too large" {
+			msg = `{"error":"payload excede el límite de 1MB"}`
+		}
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+	if req.Code == "" {
 		http.Error(w, `{"error":"missing or invalid 'code' field"}`, http.StatusBadRequest)
 		return
 	}
@@ -545,8 +563,17 @@ func (s *Server) handleFix(w http.ResponseWriter, r *http.Request) {
 		Code     string          `json:"code"`
 		Findings []agent.Finding `json:"findings"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
-		http.Error(w, `{"error":"missing or invalid fields"}`, http.StatusBadRequest)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		msg := `{"error":"missing or invalid 'code' field"}`
+		if err.Error() == "http: request body too large" {
+			msg = `{"error":"payload excede el límite de 1MB"}`
+		}
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+	if req.Code == "" {
+		http.Error(w, `{"error":"missing or invalid 'code' field"}`, http.StatusBadRequest)
 		return
 	}
 
