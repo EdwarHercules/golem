@@ -63,3 +63,18 @@ func Load() (*Config, error) {
 		ExecutionTimeout: timeout,
 	}, nil
 }
+
+func (c Config) String() string {
+	key := "[VACIA]"
+	if len(c.AnthropicAPIKey) > 8 {
+		key = c.AnthropicAPIKey[:8] + "..."
+	}
+	return fmt.Sprintf(
+		"{Provider:%s Model:%s MaxRetries:%d Timeout:%d Key:%s}",
+		c.LLMProvider,
+		c.AnthropicModel,
+		c.MaxRetries,
+		c.ExecutionTimeout,
+		key,
+	)
+}
