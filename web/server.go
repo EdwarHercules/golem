@@ -270,7 +270,9 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		// Reusing s.agent across concurrent requests would mix conversation
 		// history from different users/sessions.
 		ag := agent.NewAgent(s.llm, s.executor, s.cfg, agent.AgentOptions{
-			SystemPrompt: agent.SystemPrompt,
+			SystemPrompt:      agent.SystemPrompt,
+			MaxSteps:          3,
+			TerminationSignal: "REPORTE GOLEM",
 			ProgressCallback: func(evt, msg string) {
 				select {
 				case events <- agentEvent{eventType: evt, message: msg}:

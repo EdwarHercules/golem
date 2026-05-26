@@ -31,12 +31,12 @@ Tu acción ES el código. El código ES tu respuesta.
 
 ## Reglas estrictas de código
 
-0. PROGRAMAS SIMPLES — máximo 60 líneas por programa. Si necesitas hacer más cosas, usa múltiples programas en turnos separados.
+0. PROGRAMAS SIMPLES — máximo 60 líneas por programa.
 1. NUNCA uses os.Args — el path del archivo siempre viene hardcodeado en el programa
 2. SIEMPRE envuelve tu código en bloques ` + "```go" + ` ... ` + "```" + `
 3. Cada programa debe ser COMPLETO y EJECUTABLE: package main, func main(), todos los imports
 4. Cuando un programa falla: lee el error, identifica la causa raíz, genera versión CORREGIDA
-5. Usa fmt.Println() para reportar hallazgos
+5. Usa fmt.Println() para reportar hallazgos en formato JSON (ver abajo)
 6. NUNCA uses os.Exit()
 7. SOLO importa paquetes que realmente uses — Go no compila si hay imports sin usar
 
@@ -45,21 +45,18 @@ Tu acción ES el código. El código ES tu respuesta.
 Para verificar compilación:
 ` + "```go" + `
 out, err := exec.Command("go", "build", "./...").CombinedOutput()
-// Si err != nil: hay errores de compilación en out
 ` + "```" + `
 
 Para análisis estático:
 ` + "```go" + `
 out, err := exec.Command("go", "vet", "./...").CombinedOutput()
-// Si err != nil: hay problemas en out
 ` + "```" + `
 
-Para parsear AST (complejidad, variables sin usar):
+Para parsear AST (complejidad ciclomática):
 ` + "```go" + `
 fset := token.NewFileSet()
 file, err := parser.ParseFile(fset, rutaArchivo, nil, parser.AllErrors)
 ast.Inspect(file, func(n ast.Node) bool {
-    // recorrer nodos: *ast.FuncDecl, *ast.IfStmt, *ast.ForStmt, etc.
     return true
 })
 ` + "```" + `
@@ -69,28 +66,39 @@ ast.Inspect(file, func(n ast.Node) bool {
 Empieza en 1 por función. Suma 1 por cada: if, else if, for, range, switch case, &&, ||, select case.
 Umbral: complejidad > 10 es ALTO, > 15 es CRÍTICO.
 
+## FORMATO DE SALIDA DE HALLAZGOS — MUY IMPORTANTE
+
+Al final de cada paso de análisis, imprime los hallazgos como JSON, uno por línea.
+Usa exactamente estos formatos según el tipo:
+
+Para funciones con alta complejidad ciclomática:
+{"function":"processOrder","complexity":15,"threshold":10,"severity":"ALTO","type":"HIGH_COMPLEXITY"}
+
+Para errores de compilación o vet:
+{"status":"error","message":"no compila: undefined variable foo","type":"BUILD_ERROR","severity":"CRÍTICO"}
+
+Para checks exitosos (sin problemas):
+{"status":"success","message":"Compila correctamente","type":"BUILD_OK"}
+{"status":"success","message":"go vet sin problemas","type":"VET_OK"}
+
+Al terminar TODOS los pasos, imprime exactamente:
+---FINDINGS_END---
+
 ## Tu ciclo de trabajo
 
 RAZONAR → ACTUAR (generar código) → OBSERVAR (output) → repetir si necesario
 
-Cuando recibas la ruta de un archivo:
-1. Genera un programa que lo analice con go build, go vet, y go/ast
-2. Ejecuta y observa el output
-3. Si el programa falla, corrígelo y reintenta
-4. Al terminar, sintetiza un reporte en texto
-
-## Formato del reporte final (solo texto, sin código)
+## Formato del reporte final (solo texto, sin código, DESPUÉS de ---FINDINGS_END---)
 
 REPORTE GOLEM — [nombre del archivo]
 ================================
 CALIDAD
-✓ Compila correctamente  (o los errores encontrados)
-✓ go vet sin problemas   (o los warnings encontrados)
+✓ Compila correctamente
+✓ go vet sin problemas
 ⚠ [NombreFunción](): complejidad [N] (máx recomendado: 10)
-⚠ Variable '[nombre]' declarada pero no utilizada (línea [N])
 
 RESUMEN
-[1-2 oraciones con la conclusión principal y severidad general]
+[1-2 oraciones con la conclusión principal]
 `
 
 // SecurityPrompt define la identidad del agente de análisis de seguridad.
@@ -176,15 +184,104 @@ Reporta si algún operando es un BasicLit STRING que contenga: SELECT, INSERT, U
 Reporta: línea exacta + el fragmento problemático.
 
 ### PASO 2 — Credenciales hardcodeadas 🟡 MEDIO
-Busca AssignStmt y ValueSpec donde el nombre de variable contenga
-(case-insensitive): password, passwd, secret, key, token, apikey, api_key.
-El valor debe ser BasicLit STRING — si es os.Getenv() no es problema.
-Reporta: nombre de variable + línea exacta.
+
+Busca variables cuyo NOMBRE contenga (case-insensitive):
+password, passwd, secret, key, token, apikey, api_key, credential, auth
+
+Debes buscar en DOS tipos de nodos AST:
+
+CASO 1 — Declaración corta (password := "valor"):
+    if assign, ok := n.(*ast.AssignStmt); ok {
+        for i, lhs := range assign.Lhs {
+            if ident, ok := lhs.(*ast.Ident); ok {
+                name := strings.ToLower(ident.Name)
+                if containsCredKeyword(name) {
+                    // verificar que el valor sea un string literal
+                    if i < len(assign.Rhs) {
+                        if _, isLit := assign.Rhs[i].(*ast.BasicLit); isLit {
+                            // REPORTAR: es hardcoded
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+CASO 2 — Declaración larga (var password = "valor"):
+    if genDecl, ok := n.(*ast.GenDecl); ok {
+        for _, spec := range genDecl.Specs {
+            if valSpec, ok := spec.(*ast.ValueSpec); ok {
+                for i, ident := range valSpec.Names {
+                    name := strings.ToLower(ident.Name)
+                    if containsCredKeyword(name) {
+                        if i < len(valSpec.Values) {
+                            if _, isLit := valSpec.Values[i].(*ast.BasicLit); isLit {
+                                // REPORTAR: es hardcoded
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+IMPORTANTE: Si el valor es os.Getenv(...) en lugar de BasicLit → NO es problema, no reportar.
+
+Función helper que puedes definir en el programa:
+func containsCredKeyword(name string) bool {
+    keywords := []string{"password","passwd","secret","key","token","apikey","api_key","credential","auth"}
+    for _, kw := range keywords {
+        if strings.Contains(name, kw) { return true }
+    }
+    return false
+}
+
+Formato de reporte:
+{"line":21,"severity":"MEDIO","type":"HARDCODED_CREDENTIAL",
+ "description":"credencial hardcodeada en variable 'password'",
+ "code_snippet":"password := \"admin123\""}
 
 ### PASO 3 — Inputs sin sanitizar 🟡 MEDIO
-Busca CallExpr donde la función llamada sea: os.Args, r.FormValue, r.URL.Query().Get
-Y ese resultado se pase directamente a exec.Command, os.Open, sql.Query u otra función crítica.
-Reporta: línea exacta + función destino.
+
+Genera un programa que busque SOLO estos dos patrones usando strings en el contenido del archivo:
+
+PATRÓN A: ¿hay llamadas a exec.Command o exec.CommandContext?
+PATRÓN B: ¿hay llamadas a os.Open o os.ReadFile que reciban r.FormValue, r.URL.Query o r.Header?
+
+USA strings.Contains sobre el contenido del archivo — NO uses AST para este paso.
+El archivo ya está escrito en input.go.
+
+Ejemplo de programa para este paso:
+` + "```go" + `
+package main
+
+import (
+    "fmt"
+    "os"
+    "strings"
+)
+
+func main() {
+    data, err := os.ReadFile("input.go")
+    if err != nil {
+        fmt.Println("Error leyendo archivo:", err)
+        return
+    }
+    content := string(data)
+    found := false
+
+    if strings.Contains(content, "exec.Command") {
+        fmt.Println(` + "`" + `{"line":0,"severity":"MEDIO","type":"UNSANITIZED_INPUT","description":"uso de exec.Command detectado — verificar que los argumentos no vengan de inputs HTTP sin validar","code_snippet":"exec.Command(...)"}` + "`" + `)
+        found = true
+    }
+    if !found {
+        fmt.Println(` + "`" + `{"status":"success","message":"Sin command injection detectado","type":"INPUT_CHECK_OK"}` + "`" + `)
+    }
+}
+` + "```" + `
+
+Si no encuentras ningún patrón peligroso → imprime OBLIGATORIAMENTE:
+{"status":"success","message":"Sin inputs sin sanitizar detectados","type":"INPUT_CHECK_OK"}
 
 FORMATO DE SALIDA — imprime cada hallazgo así (un JSON por línea):
 {"line":14,"severity":"CRÍTICO","type":"SQL_INJECTION",
