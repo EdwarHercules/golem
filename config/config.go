@@ -12,7 +12,7 @@ import (
 // Se carga una sola vez al arrancar y se comparte entre subcomandos.
 type Config struct {
 	LLMProvider      string // "anthropic" o "ollama"
-	AnthropicAPIKey  string // requerida para usar Claude
+	AnthropicAPIKey  Secret // requerida para usar Claude
 	AnthropicModel   string // modelo a usar, ej: "claude-haiku-4-5"
 	MaxRetries       int    // cuántos intentos hace el agente antes de rendirse
 	ExecutionTimeout int    // segundos máximos para ejecutar código generado
@@ -57,7 +57,7 @@ func Load() (*Config, error) {
 
 	return &Config{
 		LLMProvider:      os.Getenv("LLM_PROVIDER"),
-		AnthropicAPIKey:  apiKey,
+		AnthropicAPIKey:  Secret(apiKey),
 		AnthropicModel:   model,
 		MaxRetries:       maxRetries,
 		ExecutionTimeout: timeout,
@@ -65,16 +65,32 @@ func Load() (*Config, error) {
 }
 
 func (c Config) String() string {
-	key := "[VACIA]"
-	if len(c.AnthropicAPIKey) > 8 {
-		key = c.AnthropicAPIKey[:8] + "..."
-	}
 	return fmt.Sprintf(
 		"{Provider:%s Model:%s MaxRetries:%d Timeout:%d Key:%s}",
-		c.LLMProvider,
-		c.AnthropicModel,
-		c.MaxRetries,
-		c.ExecutionTimeout,
-		key,
+		c.LLMProvider, c.AnthropicModel, c.MaxRetries, c.ExecutionTimeout, c.AnthropicAPIKey,
 	)
+}
+
+// Tipo que protege cualquier string sensible
+type Secret string
+
+func (s Secret) String() string {
+	if len(s) < 8 {
+		return "[VACIA]"
+	}
+	return string(s[:8]) + "..."
+}
+
+// GoString() se llama con %#v
+func (s Secret) GoString() string {
+	return `Secret("[REDACTED]")`
+}
+
+// MarshalJSON evita que salga en logs JSON
+func (s Secret) MarshalJSON() ([]byte, error) {
+	return []byte(`"[REDACTED]"`), nil
+}
+
+func (s Secret) Value() string {
+	return string(s)
 }

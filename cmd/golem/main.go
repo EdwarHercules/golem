@@ -45,7 +45,7 @@ func run() error {
 		return fmt.Errorf("configuración inválida: %w\n💡 Asegúrate de tener ANTHROPIC_API_KEY en tu archivo .env", err)
 	}
 
-	llmClient, err := llm.NewAnthropicClient(cfg.AnthropicAPIKey, cfg.AnthropicModel)
+	llmClient, err := llm.NewAnthropicClient(cfg.AnthropicAPIKey.Value(), cfg.AnthropicModel)
 	if err != nil {
 		return fmt.Errorf("no se pudo conectar al LLM: %w", err)
 	}
@@ -81,7 +81,7 @@ func runREPL() error {
 		return fmt.Errorf("configuración inválida: %w\n💡 Asegúrate de tener ANTHROPIC_API_KEY en tu archivo .env", err)
 	}
 
-	llmClient, err := llm.NewAnthropicClient(cfg.AnthropicAPIKey, cfg.AnthropicModel)
+	llmClient, err := llm.NewAnthropicClient(cfg.AnthropicAPIKey.Value(), cfg.AnthropicModel)
 	if err != nil {
 		return fmt.Errorf("no se pudo conectar al LLM: %w", err)
 	}
@@ -135,7 +135,7 @@ func runREPL() error {
 // runAnalyze ahora retorna error en lugar de llamar os.Exit directamente.
 func runAnalyze(args []string, llmClient llm.LLMClient, ex executor.Executor, cfg *config.Config) error {
 	cmd := flag.NewFlagSet("analyze", flag.ContinueOnError) // ContinueOnError → no llama os.Exit
-	fileFlag    := cmd.String("file", "", "ruta al archivo Go a analizar")
+	fileFlag := cmd.String("file", "", "ruta al archivo Go a analizar")
 	verboseFlag := cmd.Bool("verbose", false, "mostrar código generado y detalles de ejecución")
 	providerFlag := cmd.String("provider", "", "sobreescribir proveedor LLM (anthropic/ollama)")
 
@@ -187,9 +187,9 @@ func runAnalyze(args []string, llmClient llm.LLMClient, ex executor.Executor, cf
 // runSecurity ahora retorna error.
 func runSecurity(args []string, llmClient llm.LLMClient, ex executor.Executor, cfg *config.Config) error {
 	cmd := flag.NewFlagSet("security", flag.ContinueOnError)
-	fileFlag     := cmd.String("file", "", "ruta al archivo Go a analizar")
-	fixFlag      := cmd.Bool("fix", false, "aplicar fixes automáticos")
-	verboseFlag  := cmd.Bool("verbose", false, "mostrar código generado y detalles de ejecución")
+	fileFlag := cmd.String("file", "", "ruta al archivo Go a analizar")
+	fixFlag := cmd.Bool("fix", false, "aplicar fixes automáticos")
+	verboseFlag := cmd.Bool("verbose", false, "mostrar código generado y detalles de ejecución")
 	providerFlag := cmd.String("provider", "", "sobreescribir proveedor LLM (anthropic/ollama)")
 
 	if err := cmd.Parse(args); err != nil {
