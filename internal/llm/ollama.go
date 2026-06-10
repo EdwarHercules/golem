@@ -55,7 +55,7 @@ func (c *OllamaClient) Complete(ctx context.Context, systemPrompt string, messag
 
 	// POST a /api/chat — endpoint compatible con formato OpenAI
 	reqBody := bytes.NewBuffer(jsonBody)
-	resp, err := http.Post(c.baseURL+"api/chat", "application/json", reqBody)
+	resp, err := http.Post(c.baseURL+"/api/chat", "application/json", reqBody)
 	if err != nil {
 		return "", fmt.Errorf("Error al realizar el post: %w", err)
 	}
