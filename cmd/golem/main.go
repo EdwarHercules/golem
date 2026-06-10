@@ -33,6 +33,19 @@ func main() {
 	}
 }
 
+func buildLLMClient(cfg *config.Config) (llm.LLMClient, error) {
+	switch cfg.LLMProvider {
+	case "anthopic":
+		client, err := llm.NewAnthropicClient(cfg.LLMAPIKey.Value(), cfg.LLMModel)
+		if err != nil {
+			return nil, fmt.Errorf("Inicializador cliente anthropic: %w", err)
+		}
+		return client, nil
+	default:
+		return nil, fmt.Errorf("Provedor no soportado %q (opciones: anthropic)", cfg.LLMProvider)
+	}
+}
+
 // run contiene toda la lógica de arranque.
 // Retorna error en lugar de llamar log.Fatal — así main() controla el exit.
 func run() error {
@@ -42,10 +55,10 @@ func run() error {
 
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("configuración inválida: %w\n💡 Asegúrate de tener ANTHROPIC_API_KEY en tu archivo .env", err)
+		return fmt.Errorf("configuración inválida: %w\n💡 Asegúrate de tener LLM_API_KEY en tu archivo .env", err)
 	}
 
-	llmClient, err := llm.NewAnthropicClient(cfg.AnthropicAPIKey.Value(), cfg.AnthropicModel)
+	llmClient, err := buildLLMClient(cfg)
 	if err != nil {
 		return fmt.Errorf("no se pudo conectar al LLM: %w", err)
 	}
@@ -81,7 +94,7 @@ func runREPL() error {
 		return fmt.Errorf("configuración inválida: %w\n💡 Asegúrate de tener ANTHROPIC_API_KEY en tu archivo .env", err)
 	}
 
-	llmClient, err := llm.NewAnthropicClient(cfg.AnthropicAPIKey.Value(), cfg.AnthropicModel)
+	llmClient, err := llm.NewAnthropicClient(cfg.LLMAPIKey.Value(), cfg.LLMModel)
 	if err != nil {
 		return fmt.Errorf("no se pudo conectar al LLM: %w", err)
 	}

@@ -12,8 +12,8 @@ import (
 // Se carga una sola vez al arrancar y se comparte entre subcomandos.
 type Config struct {
 	LLMProvider      string // "anthropic" o "ollama"
-	AnthropicAPIKey  Secret // requerida para usar Claude
-	AnthropicModel   string // modelo a usar, ej: "claude-haiku-4-5"
+	LLMAPIKey        Secret // requerida para usar Claude
+	LLMModel         string // modelo a usar, ej: "claude-haiku-4-5"
 	MaxRetries       int    // cuántos intentos hace el agente antes de rendirse
 	ExecutionTimeout int    // segundos máximos para ejecutar código generado
 }
@@ -26,16 +26,29 @@ func Load() (*Config, error) {
 	// donde las variables vienen del sistema operativo directamente
 	_ = godotenv.Load()
 
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
+	provider := os.Getenv("LLM_PROVIDER")
+
+	if provider == "" {
+		provider = "anthropic"
+	}
+
+	apiKey := os.Getenv("LLM_API_KEY")
+	if apiKey == "" && provider == "anthropic" {
 		return nil, fmt.Errorf(
 			"ANTHROPIC_API_KEY no encontrada\n" +
-				"   💡 Crea un archivo .env con: ANTHROPIC_API_KEY=tu_key_aqui\n" +
+				"   💡 Crea un archivo .env con: LLM_API_KEY=tu_key_aqui\n" +
 				"   📄 Puedes copiar .env.example como punto de partida",
 		)
 	}
+	if apiKey == "" && provider != "anthropic" {
+		return nil, fmt.Errorf(
+			"LLM_API_KEY no encontrada\n" +
+				"   💡 Crea un archivo .env con: LLM_API_KEY=tu_key_aqui\n" +
+				"   📄 Puedes copiar .env.example como punto de partida")
 
-	model := os.Getenv("ANTHROPIC_MODEL")
+	}
+
+	model := os.Getenv("LLM_MODEL")
 	if model == "" {
 		model = "claude-haiku-4-5-20251001"
 	}
@@ -57,8 +70,8 @@ func Load() (*Config, error) {
 
 	return &Config{
 		LLMProvider:      os.Getenv("LLM_PROVIDER"),
-		AnthropicAPIKey:  Secret(apiKey),
-		AnthropicModel:   model,
+		LLMAPIKey:        Secret(apiKey),
+		LLMModel:         model,
 		MaxRetries:       maxRetries,
 		ExecutionTimeout: timeout,
 	}, nil
@@ -67,7 +80,7 @@ func Load() (*Config, error) {
 func (c Config) String() string {
 	return fmt.Sprintf(
 		"{Provider:%s Model:%s MaxRetries:%d Timeout:%d Key:%s}",
-		c.LLMProvider, c.AnthropicModel, c.MaxRetries, c.ExecutionTimeout, c.AnthropicAPIKey,
+		c.LLMProvider, c.LLMModel, c.MaxRetries, c.ExecutionTimeout, c.LLMAPIKey,
 	)
 }
 

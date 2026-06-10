@@ -80,7 +80,7 @@ type Server struct {
 func NewServer(cfg *config.Config, port string) (*Server, error) {
 	// AnthropicClient validates the API key inside its constructor, so any
 	// misconfiguration surfaces immediately rather than at the first request.
-	llmClient, err := llm.NewAnthropicClient(cfg.AnthropicAPIKey, cfg.AnthropicModel)
+	llmClient, err := llm.NewAnthropicClient(cfg.LLMAPIKey.Value(), cfg.LLMModel)
 	if err != nil {
 		return nil, fmt.Errorf("init llm client: %w", err)
 	}
