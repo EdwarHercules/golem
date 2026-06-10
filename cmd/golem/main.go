@@ -33,16 +33,26 @@ func main() {
 	}
 }
 
+// buildLLMClient construye el cliente LLM correcto según LLM_PROVIDER.
+// Agregar un nuevo proveedor requiere solo un nuevo case aquí —
+// el agente no necesita cambios porque trabaja contra la interfaz LLMClient.
 func buildLLMClient(cfg *config.Config) (llm.LLMClient, error) {
 	switch cfg.LLMProvider {
-	case "anthopic":
+	case "anthropic":
 		client, err := llm.NewAnthropicClient(cfg.LLMAPIKey.Value(), cfg.LLMModel)
 		if err != nil {
-			return nil, fmt.Errorf("Inicializador cliente anthropic: %w", err)
+			return nil, fmt.Errorf("inicializar cliente anthropic: %w", err)
+		}
+		return client, nil
+	case "ollama":
+		// baseURL hardcodeada por ahora — configurable via LLM_BASE_URL en el futuro
+		client, err := llm.NewOllamaClient("http://localhost:11434", cfg.LLMModel)
+		if err != nil {
+			return nil, fmt.Errorf("inicializar cliente Ollam: %w", err)
 		}
 		return client, nil
 	default:
-		return nil, fmt.Errorf("Provedor no soportado %q (opciones: anthropic)", cfg.LLMProvider)
+		return nil, fmt.Errorf("Provedor no soportado %q (opciones: anthropic, ollama)", cfg.LLMProvider)
 	}
 }
 
