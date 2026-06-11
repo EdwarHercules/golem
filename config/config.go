@@ -27,30 +27,49 @@ func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	provider := os.Getenv("LLM_PROVIDER")
-
 	if provider == "" {
-		provider = "anthropic"
+		return nil, fmt.Errorf(
+			"LLM_PROVIDER no encontrado\n" +
+				"   💡 Crea un archivo .env con: LLM_PROVIDER=anthropic\n" +
+				"   📄 Proveedores válidos: anthropic, ollama",
+		)
 	}
 
 	apiKey := os.Getenv("LLM_API_KEY")
-	if apiKey == "" && provider == "anthropic" {
+	if apiKey == "" {
 		return nil, fmt.Errorf(
-			"ANTHROPIC_API_KEY no encontrada\n" +
+			"LLM_API_KEY no encontrada\n" +
 				"   💡 Crea un archivo .env con: LLM_API_KEY=tu_key_aqui\n" +
 				"   📄 Puedes copiar .env.example como punto de partida",
 		)
 	}
-	if apiKey == "" && provider != "anthropic" {
-		return nil, fmt.Errorf(
-			"LLM_API_KEY no encontrada\n" +
-				"   💡 Crea un archivo .env con: LLM_API_KEY=tu_key_aqui\n" +
-				"   📄 Puedes copiar .env.example como punto de partida")
-
-	}
 
 	model := os.Getenv("LLM_MODEL")
 	if model == "" {
-		model = "claude-haiku-4-5-20251001"
+		return nil, fmt.Errorf(
+			"LLM_MODEL no encontrado\n" +
+				"   💡 Crea un archivo .env con: LLM_MODEL=claude-haiku-4-5-20251001\n" +
+				"   📄 Consulta la documentación para ver modelos válidos por proveedor",
+		)
+	}
+	modelCheck := false
+
+	modelos := map[string][]string{
+		"anthropic": {"claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"},
+		"ollama":    {"llama3.2", "llama3.1", "mistral", "gemma3", "gemma2", "qwen3", "qwen2.5", "deepseek-r1", "phi4", "codellama"},
+	}
+
+	for llmModelo, modelo := range modelos {
+		if llmModelo == provider {
+			for _, m := range modelo {
+				if m == model {
+					modelCheck = true
+				}
+			}
+		}
+	}
+	if !modelCheck {
+		return nil, fmt.Errorf("modelo no permitido: %q, para el proveedor %q utilice uno de: %v", model, provider, modelos[provider])
 	}
 
 	maxRetries := 10 // security needs 3 steps + 1 report + room for retries
@@ -69,7 +88,7 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		LLMProvider:      os.Getenv("LLM_PROVIDER"),
+		LLMProvider:      provider,
 		LLMAPIKey:        Secret(apiKey),
 		LLMModel:         model,
 		MaxRetries:       maxRetries,
