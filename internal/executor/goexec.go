@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 )
@@ -26,21 +27,21 @@ func (e *GoExecutor) Execute(ctx context.Context, code string) (ExecutionResult,
 		return ExecutionResult{}, fmt.Errorf("validación de seguridad: %w", err)
 	}
 
-	// Crear archivo temporal
-	tmpFile, err := os.CreateTemp("", "golem_*.go")
+	// Crear directorio temporal
+	tmpDir, err := os.MkdirTemp("", "Golem_*")
 	if err != nil {
-		return ExecutionResult{}, fmt.Errorf("crear archivo temporal: %w", err)
+		return ExecutionResult{}, fmt.Errorf("crear directorio temporal: %w", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	os.Chmod(tmpDir, 0700)
+	defer os.RemoveAll(tmpDir)
 
-	// Escribir código y cerrar
-	if _, err := tmpFile.WriteString(code); err != nil {
+	rutaArchivo := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(rutaArchivo, []byte(code), 0600); err != nil {
 		return ExecutionResult{}, fmt.Errorf("escribir código temporal: %w", err)
 	}
-	tmpFile.Close()
 
 	// Preparar comando SIN context — lo manejamos manualmente para Windows
-	cmd := exec.Command("go", "run", tmpFile.Name())
+	cmd := exec.Command("go", "run", rutaArchivo)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
