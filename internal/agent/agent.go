@@ -35,13 +35,13 @@ type AgentOptions struct {
 // No sabe cómo ejecuta — eso lo hace el Executor.
 // Solo sabe cómo coordinar el ciclo.
 type Agent struct {
-	llm               llm.LLMClient
-	executor          executor.Executor
-	config            *config.Config
-	memory            *memory.Memory
-	systemPrompt      string
-	maxSteps          int
-	terminationSignal string
+	llm                       llm.LLMClient
+	executor                  executor.Executor
+	config                    *config.Config
+	memory                    *memory.Memory
+	systemPrompt              string
+	maxSteps                  int
+	terminationSignal         string
 	verbose                   bool
 	progressCallback          func(event string, message string)
 	codeCallback              func(step int, code string)
@@ -52,13 +52,13 @@ type Agent struct {
 // Cada llamada crea una memoria fresca — los agentes no comparten historial.
 func NewAgent(llmClient llm.LLMClient, exec executor.Executor, cfg *config.Config, opts AgentOptions) *Agent {
 	return &Agent{
-		llm:               llmClient,
-		executor:          exec,
-		config:            cfg,
-		memory:            memory.New(),
-		systemPrompt:      opts.SystemPrompt,
-		maxSteps:          opts.MaxSteps,
-		terminationSignal: opts.TerminationSignal,
+		llm:                       llmClient,
+		executor:                  exec,
+		config:                    cfg,
+		memory:                    memory.New(),
+		systemPrompt:              opts.SystemPrompt,
+		maxSteps:                  opts.MaxSteps,
+		terminationSignal:         opts.TerminationSignal,
 		verbose:                   opts.Verbose,
 		progressCallback:          opts.ProgressCallback,
 		codeCallback:              opts.CodeCallback,
@@ -72,6 +72,8 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 	a.memory.AddUserMessage(task)
 	successCount := 0
 	var programFindings []Finding
+	attemptInStep := 1
+	var stepDurations []StepDuration
 
 	for attempt := 1; attempt <= a.config.MaxRetries; attempt++ {
 		if a.verbose {
@@ -84,10 +86,12 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 		}
 
 		// RAZONAR — el LLM recibe el historial completo para poder autocorregirse
+		llmStart := time.Now()
 		response, err := a.llm.Complete(ctx, a.systemPrompt, a.memory.Messages())
 		if err != nil {
 			return nil, fmt.Errorf("error consultando LLM en intento %d: %w", attempt, err)
 		}
+		llmDuration := time.Since(llmStart)
 
 		if a.verbose {
 			fmt.Printf("[LLM] Respuesta recibida (%d caracteres)\n", len(response))
@@ -100,6 +104,14 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 
 		// Guardia: el LLM quiso terminar antes de completar todos los pasos
 		if strings.Contains(response, "---FINDINGS_END---") && successCount < a.maxSteps {
+			stepDurations = append(stepDurations, StepDuration{
+				StepNumber:    successCount + 1,
+				AttemptNumber: attemptInStep,
+				LLMCall:       JSONDuration(llmDuration),
+				Execution:     0,
+				Total:         JSONDuration(llmDuration),
+			})
+			attemptInStep++
 			a.memory.AddUserMessage(fmt.Sprintf(
 				"Aún no has ejecutado los %d pasos de análisis. Solo completaste %d. "+
 					"NO escribas el reporte todavía. Genera el código Go para el paso %d.",
@@ -118,8 +130,9 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 				findings = programFindings
 			}
 			return &AgentResult{
-				Report:   response,
-				Findings: findings,
+				Report:        response,
+				Findings:      findings,
+				StepDurations: stepDurations,
 			}, nil
 		}
 
@@ -130,6 +143,14 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 			if a.verbose {
 				fmt.Println("[Warning] No se detectó código Go en la respuesta, reintentando...")
 			}
+			stepDurations = append(stepDurations, StepDuration{
+				StepNumber:    successCount + 1,
+				AttemptNumber: attemptInStep,
+				LLMCall:       JSONDuration(llmDuration),
+				Execution:     0,
+				Total:         JSONDuration(llmDuration),
+			})
+			attemptInStep++
 			a.memory.AddUserMessage(
 				"No detecté código Go en tu respuesta. " +
 					"Continúa con el siguiente paso del análisis generando el código correspondiente.",
@@ -141,6 +162,14 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 			if a.verbose {
 				fmt.Println("[Warning] Código extraído no empieza con 'package', reintentando...")
 			}
+			stepDurations = append(stepDurations, StepDuration{
+				StepNumber:    successCount + 1,
+				AttemptNumber: attemptInStep,
+				LLMCall:       JSONDuration(llmDuration),
+				Execution:     0,
+				Total:         JSONDuration(llmDuration),
+			})
+			attemptInStep++
 			a.memory.AddUserMessage(
 				"El código que generaste no es Go válido. " +
 					"Asegúrate de generar SOLO el bloque de código Go, empezando con 'package main'.",
@@ -166,10 +195,12 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 		}
 
 		// ACTUAR — ejecutar con timeout
+		execStart := time.Now()
 		execCTX, cancel := context.WithTimeout(ctx,
 			time.Duration(a.config.ExecutionTimeout)*time.Second)
 		result, execErr := a.executor.Execute(execCTX, code)
 		cancel()
+		execDuration := time.Since(execStart)
 
 		// OBSERVAR — ¿qué pasó?
 		if execErr != nil {
@@ -177,6 +208,14 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 			if a.verbose {
 				fmt.Printf("[Error] El executor falló: %v\n", execErr)
 			}
+			stepDurations = append(stepDurations, StepDuration{
+				StepNumber:    successCount + 1,
+				AttemptNumber: attemptInStep,
+				LLMCall:       JSONDuration(llmDuration),
+				Execution:     JSONDuration(execDuration),
+				Total:         JSONDuration(llmDuration + execDuration),
+			})
+			attemptInStep++
 			if attempt == a.config.MaxRetries {
 				return nil, fmt.Errorf("executor falló después de %d intentos: %w",
 					a.config.MaxRetries, execErr)
@@ -192,6 +231,14 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 			if a.verbose {
 				fmt.Printf("[Fallo] ExitCode: %d\nStderr: %s\n", result.ExitCode, result.Stderr)
 			}
+			stepDurations = append(stepDurations, StepDuration{
+				StepNumber:    successCount + 1,
+				AttemptNumber: attemptInStep,
+				LLMCall:       JSONDuration(llmDuration),
+				Execution:     JSONDuration(execDuration),
+				Total:         JSONDuration(llmDuration + execDuration),
+			})
+			attemptInStep++
 			if attempt == a.config.MaxRetries {
 				return nil, fmt.Errorf(
 					"código generado falló después de %d intentos.\nÚltimo error:\n%s",
@@ -207,6 +254,14 @@ func (a *Agent) Run(ctx context.Context, task string) (*AgentResult, error) {
 		}
 
 		// ÉXITO — el código ejecutó correctamente
+		stepDurations = append(stepDurations, StepDuration{
+			StepNumber:    successCount + 1,
+			AttemptNumber: attemptInStep,
+			LLMCall:       JSONDuration(llmDuration),
+			Execution:     JSONDuration(execDuration),
+			Total:         JSONDuration(llmDuration + execDuration),
+		})
+		attemptInStep = 1
 		successCount++
 		programFindings = append(programFindings, parseFindings(result.Stdout)...)
 
